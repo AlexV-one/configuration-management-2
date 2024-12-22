@@ -1,0 +1,62 @@
+import subprocess
+from datetime import datetime
+import toml
+import os
+import unittest
+
+def load_config(config_file):
+    with open(config_file, 'r') as f:
+        config = toml.load(f)
+    repo_path = config['paths']['repo_path']
+    output_file = config['paths']['output_file']
+    return repo_path, output_file
+
+def generate_plantuml_graph(repo_path, output_file):
+    # Команда для выполнения git log
+    git_log_command = [
+        "git", "-C", repo_path, "log", "--pretty=format:%H|%cd|%P", "--date=iso", "--reverse"
+    ]
+    result = subprocess.run(git_log_command, capture_output=True, text=True)
+    if result.returncode != 0:
+        raise Exception(f"Git log command failed: {result.stderr}")
+    log_output = result.stdout.split("\n")
+
+    # Инициализация PlantUML кода
+    puml_code = "@startuml\n"
+    puml_code += "skinparam monochrome true\n"
+    puml_code += "skinparam node {\n"
+    puml_code += "  BackgroundColor #eee\n"
+    puml_code += "  BorderColor #555\n"
+    puml_code += "}\n"
+
+    commit_nodes = set()
+
+    for line in log_output:
+        parts = line.split("|")
+        if len(parts) >= 3:
+            commit_hash, commit_date_str, parent_hashes = parts
+            commit_date = datetime.fromisoformat(commit_date_str.strip())
+            if commit_hash not in commit_nodes:
+                puml_code += f"node \"{commit_hash[:7]}\" as {commit_hash}\n"
+                commit_nodes.add(commit_hash)
+            for parent_hash in parent_hashes.split():
+                if parent_hash in commit_nodes:
+                    puml_code += f"{parent_hash} --> {commit_hash}\n"
+
+    puml_code += "@enduml\n"
+
+    # Сохранение PlantUML кода в файл
+    with open(output_file, 'w') as f:
+        f.write(puml_code)
+
+    # Вывод PlantUML кода на экран
+    print(puml_code)
+    return puml_code
+
+def main(config_file):
+    repo_path, output_file = load_config(config_file)
+    generate_plantuml_graph(repo_path, output_file)
+
+if __name__ == "__main__":
+    config_file = "config.toml"
+    main(config_file)
