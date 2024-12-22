@@ -1,0 +1,78 @@
+import unittest
+from unittest.mock import patch, mock_open, MagicMock
+import os
+import toml
+import subprocess
+from dependency_graph import load_config, generate_plantuml_graph, main
+
+class TestDependencyVisualizer(unittest.TestCase):
+
+    @patch('builtins.open', new_callable=mock_open, read_data='[paths]\nrepo_path = "/test/repo"\noutput_file = "/test/output.puml"')
+    def test_load_config(self, mock_file):
+        repo_path, output_file = load_config("config.toml")
+        self.assertEqual(repo_path, "/test/repo")
+        self.assertEqual(output_file, "/test/output.puml")
+
+    @patch('os.path.isdir', return_value=True)
+    @patch('subprocess.run')
+    def test_generate_plantuml_graph(self, mock_subprocess, mock_isdir):
+        mock_subprocess.return_value = subprocess.CompletedProcess(
+            args=[],
+            returncode=0,
+            stdout="commit1|2023-10-01T12:00:00+00:00|\ncommit2|2023-10-02T12:00:00+00:00|commit1\ncommit3|2023-10-03T12:00:00+00:00|commit2",
+            stderr=""
+        )
+        with patch('builtins.open', new_callable=mock_open) as mock_file:
+            puml_code = generate_plantuml_graph("/test/repo", "/test/output.puml")
+            expected_puml_code = (
+                "@startuml\n"
+                "skinparam monochrome true\n"
+                "skinparam node {\n"
+                "  BackgroundColor #eee\n"
+                "  BorderColor #555\n"
+                "}\n"
+                "node \"commit1\" as commit1\n"
+                "node \"commit2\" as commit2\n"
+                "commit1 --> commit2\n"
+                "node \"commit3\" as commit3\n"
+                "commit2 --> commit3\n"
+                "@enduml\n"
+            )
+            self.assertEqual(puml_code, expected_puml_code)
+            mock_file.assert_called_once_with("/test/output.puml", 'w')
+            mock_file().write.assert_called_once_with(expected_puml_code)
+
+    @patch('os.path.isdir', return_value=False)
+    def test_generate_plantuml_graph_invalid_repo_path(self, mock_isdir):
+        with self.assertRaises(Exception) as context:
+            generate_plantuml_graph("/invalid/repo", "/test/output.puml")
+        self.assertIn("No such file or directory", str(context.exception))
+
+    @patch('os.path.isdir', side_effect=[True, False])
+    def test_generate_plantuml_graph_not_git_repo(self, mock_isdir):
+        with self.assertRaises(Exception) as context:
+            generate_plantuml_graph("/test/repo", "/test/output.puml")
+        self.assertIn("No such file or directory", str(context.exception))
+
+    @patch('os.path.isdir', return_value=True)
+    @patch('subprocess.run')
+    def test_generate_plantuml_graph_with_error(self, mock_subprocess, mock_isdir):
+        mock_subprocess.return_value = subprocess.CompletedProcess(
+            args=[],
+            returncode=1,
+            stdout="",
+            stderr="fatal: not a git repository (or any of the parent directories): .git"
+        )
+        with self.assertRaises(Exception) as context:
+            generate_plantuml_graph("/invalid/repo", "/test/output.puml")
+        self.assertIn("Git log command failed", str(context.exception))
+
+    @patch('dependency_graph.load_config', return_value=("/test/repo", "/test/output.puml"))
+    @patch('dependency_graph.generate_plantuml_graph')
+    def test_main(self, mock_generate_plantuml_graph, mock_load_config):
+        main("config.toml")
+        mock_load_config.assert_called_once_with("config.toml")
+        mock_generate_plantuml_graph.assert_called_once_with("/test/repo", "/test/output.puml")
+
+if __name__ == "__main__":
+    unittest.main()
